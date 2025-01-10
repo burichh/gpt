@@ -171,37 +171,24 @@ class GPT(nn.Module):
 
         return model
 
-# --------------------------------------------------------
-
-import tiktoken
-
-class DataLoaderLite():
-    
-    def __init__(self, B, T):
-        with open("input.txt", "r") as f:
-            text = f.read()
-        enc = tiktoken.get_encoding('gpt2')
-        self.tokens = enc.encode(text)
-        self.current_position = 0
-        self.B = B
-        self.T = T
-        print(f"num of tokens: {len(self.tokens)}")
-        print(f"1 epoch = {len(self.tokens) // (B * T)} batches")
-
-    def get_next_batch(self):
-
-        B, T = self.B, self.T
-        if self.current_position + (B * T + 1) > len(self.tokens):
-            self.current_position = 0
-
-        buf = torch.tensor(self.tokens[self.current_position : self.current_position + (B * T + 1)])
-        x = buf[:-1].view(B, T)
-        y = buf[1:].view(B, T)
-        self.current_position += B * T
-        return x, y
+    def configure_optimizers(self, weight_decay, learning_rate):
+        param_dict = {pn : p for pn, p in self.named_parameters() if p.requires_grad}
+        decay_params = [p for _, p in param_dict.items() if p.dim() >= 2]
+        no_decay_params = [p for _, p in param_dict.items() if p.dim() < 2]
+        optim_groups = [
+            {'params': decay_params, 'weight_decay': weight_decay},
+            {'params': no_decay_params, 'weight_decay': 0.0}
+        ]
+        num_decay_params = sum(p.numel() for p in decay_params)
+        num_no_decay_params = sum(p.numel() for p in no_decay_params)
+        print(f"num decayed param tensors: {len(decay_params)} with {num_decay_params:,} parameters")
+        print(f"num non-decayed param tensors: {len(no_decay_params)} with {num_no_decay_params:,} parameters")
+        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=(0.9, 0.95), eps=1e-8, fused=True)
+        return optimizer
 
 # --------------------------------------------------------
-import time
+from dataloader import DataLoader
+from trainer import Trainer, CosineDecayLRScheduler
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"using device: {device}")
@@ -212,28 +199,41 @@ if torch.cuda.is_available():
 
 torch.set_float32_matmul_precision('high')
 
-train_loader = DataLoaderLite(B=8, T=1024)
+max_step = 50
+warmump_steps = 10
+max_learning_rate = 6e-4
+min_learning_rate = max_learning_rate * 0.1
+total_batch_size = 524288
+B = 8
+T = 1024
+train_loader = DataLoader(B=8, T=1024, split='train')
 model = GPT(GPTConfig())
 model.to(device)
 model = torch.compile(model)
-optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
+optimizer = model.configure_optimizers(weight_decay=0.1, learning_rate=6e-4)
+lr_scheduler = CosineDecayLRScheduler(warmump_steps, max_step, max_learning_rate, min_learning_rate)
 
-for i in range(50):
-    t0 = time.time()
-    x, y = train_loader.get_next_batch()
-    x, y = x.to(device), y.to(device)
-    optimizer.zero_grad()
-    with torch.autocast(device_type=device, dtype=torch.bfloat16):
-        logits, loss = model(x, y)
-    loss.backward()
-    optimizer.step()
-    torch.cuda.synchronize()
-    t1 = time.time()
-    dt = (t1 - t0) * 1000
-    tokens_per_sec = (train_loader.B * train_loader.T) / (t1 - t0)
-    print(f"step: {i}, loss: {loss.item()}, dt: {dt:.2f}ms, tokens/sec: {tokens_per_sec:.2f}")
+trainer = Trainer(model, optimizer, lr_scheduler, train_loader, total_batch_size, device)
+trainer.train(num_of_steps=max_step)
+
+# for step in range(max_step):
+    # t0 = time.time()
+
+    # loss, grad_norm = training_step(model, optimizer, train_loader, grad_accum_steps)
+
+    # torch.cuda.synchronize()
+    # t1 = time.time()
+    # dt = (t1 - t0) # in seconds
+    # tokens_processed = train_loader.B * train_loader.T * grad_accum_steps
+    # tokens_per_sec = tokens_processed / dt
+    # print(f"step: {step + 1} | loss: {loss.item()} | lr: {calculate_learning_rate(step):.4e} | grad_norm: {grad_norm:.4f} | dt: {1000*dt:.2f}ms | tokens/sec: {tokens_per_sec:.2f}")
+
+
 
 import sys; sys.exit(0)
+
+
+import tiktoken
 
 num_return_sequences = 5
 max_length = 30
@@ -266,160 +266,4 @@ for i in range(num_return_sequences):
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 # import code; code.interact(local=locals())
-
-
-
-
-
-
-'''
-class MultiHeadSelfAttention(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.query = nn.Linear(d_model, n_heads * d_head, bias=False) # (C, H*D)
-        self.key  = nn.Linear(d_model, n_heads * d_head, bias=False)
-        self.value = nn.Linear(d_model, n_heads * d_head, bias=False)
-        self.register_buffer("tril", torch.tril(torch.ones(n_ctx, n_ctx)))
-        self.proj = nn.Linear(n_heads * d_head, d_model)
-        self.dropout = nn.Dropout(p_dropout)
-
-    def __call__(self, x):
-        B, T, C = x.shape
-        Q = self.query(x).view(B, T, n_heads, d_head).transpose(1, 2)  # (B, T, H*D) --> (B, T, H, D) --> (B, H, T, D)
-        K = self.key(x).view(B, T, n_heads, d_head).transpose(1, 2)
-        attention = Q @ K.transpose(-1, -2) / d_head**0.5 # (B, H, T, D) @ (B, H, D, T) --> (B, H, T, T)
-        attention = attention.masked_fill(self.tril[:T, :T] == 0, float("-inf"))
-        attention = F.softmax(attention, dim=-1)
-        V = self.value(x).view(B, T, n_heads, d_head).transpose(1, 2)
-        out = attention @ V # (B, H, T, T) @ (B, H, T, D) --> (B, H, T, D) 
-        out = out.transpose(1, 2).reshape(B, T, C)
-        out = self.proj(out)
-
-        return out
-
-class Block(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.feedforward = nn.Sequential(
-            nn.Linear(d_model, 4*d_model),
-            nn.ReLU(),
-            nn.Linear(4*d_model, d_model),
-            nn.Dropout(p_dropout)
-        )
-        self.multi_head_attention = MultiHeadSelfAttention()
-        self.ln1 = nn.LayerNorm(d_model)
-        self.ln2 = nn.LayerNorm(d_model)
-        
-    def __call__(self, x):
-        x = x + self.multi_head_attention(self.ln1(x))
-        x = x + self.feedforward(self.ln2(x))
-        return x
-
-class LanguageModel(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.token_embedding = nn.Embedding(vocab_size, d_model)
-        self.positional_embedding = nn.Embedding(n_ctx, d_model)
-        self.attention_blocks = nn.Sequential(*[Block() for _ in range(n_layer)])
-        self.ln_head = nn.LayerNorm(n_embd)
-        self.head = nn.Linear(n_embd, vocab_size)
-
-        # better init, not covered in the original GPT video, but important, will cover in followup video
-        self.apply(self._init_weights)
-
-    def _init_weights(self, module):
-        if isinstance(module, nn.Linear):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            if module.bias is not None:
-                torch.nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-
-
-    def __call__(self, idx, y=None):
-        B, T = idx.shape
-        token_embedding = self.token_embedding(idx)
-        positional_embedding = self.positional_embedding(torch.arange(0, T, device=device))
-        x = token_embedding + positional_embedding
-        x = self.attention_blocks(x)
-        logits = self.head(self.ln_head(x))
-        
-        if y is not None:
-            B, T, C = logits.shape
-            logits = logits.view(B * T, C)
-            y = y.view(B * T)
-            loss = F.cross_entropy(logits, y)
-        else:
-            loss = None
-        
-        return logits, loss
-
-    @torch.no_grad()
-    def generate(self, idx, n_samples):
-        for _ in range(n_samples):
-            idx_in_block = idx[:, -block_size:]
-            logits, _ = self(idx_in_block)
-            logits = logits[:, -1, :]
-            probs = F.softmax(logits, dim=1) # probs shape (1, V)
-            next_idx = torch.multinomial(probs, 1)
-            idx = torch.cat((idx, next_idx), dim=1)
-        return idx
-
-# SECTION 1:
-# check huggingface gpt2
-# training loop with AdamW
-# periodically sample results
-# fast attention
-# data loader
-
-# SECTION 2:
-# GPU, mixed precision, torch compile, flash attention
-
-# SECTION 3:
-# AdamW, hyperparams, gradient clipping, lr scheduler distributed data parallel, eval (HellaSwag)
-
-
-# Create dataset
-def create_dataset(file_path):
-    with open(file_path, "r", encoding="utf-8") as f:
-        text = f.read()
-
-    chars = sorted(list(set(text)))
-
-    stoi = {s:i for i, s in enumerate(chars)}
-    itos = {i:s for s, i in stoi.items()}
-    vocab_size = len(chars)
-
-    encode = lambda t : [stoi[char] for char in t]
-    decode = lambda t : ''.join([itos[idx] for idx in t])
-
-    train_data = text[:int(0.9 * len(text))]
-    val_data = text[int(0.9 * len(text)):]
-
-    Xtr = torch.tensor(encode(train_data))
-    Xval = torch.tensor(encode(val_data))
-
-    return Xtr, Xval, chars
-
-def get_batch(split="train"):
-    X = Xtr if split == "train" else Xval
-    idx = torch.randint(len(X) - block_size, (batch_size,))
-    Xb = torch.stack([X[i:i+block_size] for i in idx])
-    Yb = torch.stack([X[i+1:i+block_size+1] for i in idx])
-    Xb, Yb = Xb.to(device), Yb.to(device)
-    return Xb, Yb
-'''
