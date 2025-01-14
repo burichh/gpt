@@ -5,10 +5,10 @@ from typing import Literal
 
 class DataLoader():
     
-    def __init__(self, B: int, T: int, split: Literal["train", "val"]):
+    def __init__(self, batch_size: int, sequence_length: int, split: Literal["train", "val"]):
         self.current_position = 0
-        self.B = B
-        self.T = T
+        self.B = batch_size
+        self.T = sequence_length
         self.shard_index = 0
         self.shard_names = load_shard_names(split)
         self.tokens = load_shard(self.shard_names[self.shard_index])
@@ -35,8 +35,5 @@ def load_shard_names(split):
 
 def load_shard(shard_name):
     tokens = np.load(shard_name)
-    #tokens = torch.from_numpy(tokens).long()
-
     tokens = tokens.astype(np.int64)
-    #tokens = torch.tensor(tokens, dtype=torch.long)
     return tokens
