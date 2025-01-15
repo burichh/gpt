@@ -8,6 +8,10 @@ from typing import Literal
 from dataloader import DataLoader
 from model import GPT
 from hellaswag import iterate_examples, render_example
+from ddp_config import DDPConfig, is_ddp_enabled
+from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.distributed as dist
+
 
 class CosineDecayLRScheduler:
     def __init__(self, warmup_steps: int, max_step: int, max_learning_rate: float, min_learning_rate: float) -> None:
@@ -33,28 +37,36 @@ class Trainer:
                  train_loader: DataLoader,
                  val_loader: DataLoader,
                  total_batch_size: int,
-                 device: Literal["cpu", "cuda"],
-                 log_dir: str,
-                 ddp: bool = False) -> None:
+                 ddp_config: DDPConfig,
+                 log_dir: str) -> None:
         
         self.model = model
+        self.ddp = is_ddp_enabled()
+        if self.ddp:
+            self.model = DDP(self.model, device_ids=[ddp_config.local_rank])
+        self.raw_model = self.model.module if self.ddp else self.model
+
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
         self.train_loader = train_loader
         self.val_loader = val_loader
-        self.device = device
+        self.device = ddp_config.device
         self.log_dir = log_dir
         os.makedirs(self.log_dir, exist_ok=True)
         self.log_file = os.path.join(log_dir, f"log.txt")
-        with open(self.log_file, "w") as f: # open for writing to clear the file
-            pass
+        self.ddp_config = ddp_config
 
-        assert total_batch_size % (train_loader.B * train_loader.T) == 0
+        if ddp_config.master_process:
+            with open(self.log_file, "w") as f: # open for writing to clear the file
+                pass
+
+        assert total_batch_size % (train_loader.B * train_loader.T * ddp_config.world_size) == 0
 
         self.total_batch_size = total_batch_size
-        self.grad_accum_steps = total_batch_size // (train_loader.B * train_loader.T)
-        print(f"total batch size: {total_batch_size}")
-        print(f"num of gradient accumulation steps: {self.grad_accum_steps}")
+        self.grad_accum_steps = total_batch_size // (train_loader.B * train_loader.T * ddp_config.world_size)
+        if ddp_config.master_process:
+            print(f"total batch size: {total_batch_size}")
+            print(f"num of gradient accumulation steps: {self.grad_accum_steps}")
     
     def train(self, num_of_steps: int) -> None:
 
@@ -66,7 +78,7 @@ class Trainer:
                 self._evaluate_hellaswag(step)
                 self._generate_and_print_text("Hello I'm a language model,", length=30, num_of_generated_sequences=5)
 
-                if step > 0 and (step % 5000 == 0 or last_step):
+                if step > 0 and (step % 5000 == 0 or last_step) and self.ddp_config.master_process:
                     self._save_checkpoint(step, val_loss)
 
             self._training_step(step)
@@ -82,11 +94,16 @@ class Trainer:
         for microstep in range(grad_accum_steps):
             x, y = self.train_loader.get_next_batch()
             x, y = x.to(self.device), y.to(self.device)
-            with torch.autocast(device_type=self.device, dtype=torch.bfloat16):
+            if self.ddp:
+                model.require_backward_grad_sync = (microstep == grad_accum_steps - 1)
+            with torch.autocast(device_type=self.ddp_config.device_type, dtype=torch.bfloat16):
                 logits, loss = model(x, y)
             loss = loss / grad_accum_steps
             total_loss += loss.detach()
             loss.backward()
+
+        if self.ddp:
+            dist.all_reduce(total_loss, op=dist.ReduceOp.AVG)
 
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         learning_rate = self.lr_scheduler.calculate(step)
@@ -97,11 +114,12 @@ class Trainer:
         torch.cuda.synchronize()
         t1 = time.time()
 
-        self._log_training_step(step, total_loss, learning_rate, grad_norm, (t1 - t0))
+        if self.ddp_config.master_process:
+            self._log_training_step(step, total_loss, learning_rate, grad_norm, (t1 - t0))
 
     def _log_training_step(self, step: int, loss: float, learning_rate: float, grad_norm: float, dt: float):
         B, T = self.train_loader.B, self.train_loader.T
-        tokens_processed = B * T * self.grad_accum_steps
+        tokens_processed = B * T * self.grad_accum_steps * self.ddp_config.world_size
         tokens_per_sec = tokens_processed / dt
         print(f"step: {step + 1} | loss: {loss:.6f} | lr: {learning_rate:.4e} | grad_norm: {grad_norm:.4f} | dt: {1000*dt:.1f}ms | tokens/sec: {tokens_per_sec:.1f}")
 
@@ -116,14 +134,18 @@ class Trainer:
         for microstep in range(val_steps):
             x, y = self.val_loader.get_next_batch()
             x, y = x.to(self.device), y.to(self.device)
-            with torch.autocast(device_type=self.device, dtype=torch.bfloat16):
+            with torch.autocast(device_type=self.ddp_config.device_type, dtype=torch.bfloat16):
                 logits, loss = self.model(x, y)
             loss = loss / val_steps
             total_loss += loss.detach()
 
-        print(f"validation loss: {total_loss.item():.4f}")
-        with open(self.log_file, 'a') as f:
-            f.write(f"{step} val {total_loss.item():.4f}\n")
+        if self.ddp:
+            dist.all_reduce(total_loss, op=dist.ReduceOp.AVG)
+
+        if self.ddp_config.master_process:
+            print(f"validation loss: {total_loss.item():.4f}")
+            with open(self.log_file, 'a') as f:
+                f.write(f"{step} val {total_loss.item():.4f}\n")
 
         return total_loss
 
@@ -132,21 +154,34 @@ class Trainer:
         self.model.eval()
         num_correct = 0
         num_total = 0
-        for example in iterate_examples("val"):
-            data, tokens, mask, label = render_example(example)
+        for i, example in enumerate(iterate_examples("val")):
+            if i % self.ddp_config.world_size != self.ddp_config.rank:
+                continue
+
+            _, tokens, mask, label = render_example(example)
             tokens = tokens.to(self.device)
             mask = mask.to(self.device)
-            with torch.autocast(device_type=self.device, dtype=torch.bfloat16):
-                logits, loss = self.model(tokens)
+            with torch.autocast(device_type=self.ddp_config.device_type, dtype=torch.bfloat16):
+                logits, _ = self.model(tokens)
             predicted_answer = get_most_likely_answer(logits, tokens, mask)
 
             num_total += 1
             num_correct += int(predicted_answer == label)
-            accuracy = num_correct / num_total
 
-        print(f"Hellaswag accuracy: {num_correct} / {num_total} = {accuracy:.4f}")
-        with open(self.log_file, 'a') as f:
-            f.write(f"{step} hella {accuracy:.4f}\n")
+        # reduce the stats across all processes
+        if self.ddp:
+            num_total = torch.tensor(num_total, dtype=torch.long, device=self.ddp_config.device)
+            num_correct = torch.tensor(num_correct, dtype=torch.long, device=self.ddp_config.device)
+            dist.all_reduce(num_total, op=dist.ReduceOp.SUM)
+            dist.all_reduce(num_correct, op=dist.ReduceOp.SUM)
+            num_total = num_total.item()
+            num_correct = num_correct.item()
+
+        if self.ddp_config.master_process:
+            accuracy = num_correct / num_total
+            print(f"Hellaswag accuracy: {num_correct} / {num_total} = {accuracy:.4f}")
+            with open(self.log_file, 'a') as f:
+                f.write(f"{step} hella {accuracy:.4f}\n")
 
 
     @torch.no_grad()
@@ -172,7 +207,7 @@ class Trainer:
         x = tokens.to(self.device)
 
         while x.size(1) < length:
-            with torch.autocast(device_type=self.device, dtype=torch.bfloat16):
+            with torch.autocast(device_type=self.ddp_config.device_type, dtype=torch.bfloat16):
                 logits, loss = self.model(x)
             probs = F.softmax(logits[:, -1, :], dim=-1)
             top_k_probs, top_k_indices = torch.topk(probs, 50, dim=-1) # (B, 50)
