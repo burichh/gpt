@@ -11,16 +11,38 @@ What I cannot create, I do not understand!
 
 Thus this repo exists.
 
-# Why GPT-2 is important?
+
 
 # Goal
 Andrej Karpathy is great. He is just great. When I saw he released his video [Let's reproduce GPT-2 (124M)](https://youtu.be/l8pRSuU81PU) my goal was clear: understand every step he makes, the reasoning why he does so, the context within which that reasoning exists, and then reproduce his results. More precisely, reproduce OpenAI's results of GPT2-Small version (124 million parameters), based on the papers [[1]] and [[2]] guided by Andrej's video.
 
 **Learning loop**: watch the video, read the papers (and some others that I've found really helpful too, linked at the bottom), make notes, close the solution, code it from scratch, play with the results, compare with Andrej's code, take over his solutions where I found they were superior, and refactor where needed. Repeat.
 
+So, from meaningless jibber-jabber, starting with my hardcoded context `I have no idea what I'm doing, but`
+
+```
+I have no idea what I'm doing, but punk obfuscBostonsided periodicHu observable Lionellication989phicallGridEspecially hordes tc NAS periodicdriving accur
+```
+
+I wanted to get to a point where my GPT can generate some tiny tiny spark of linguistic intelligence. Well, it got to the point where it *sometimes* starts making sense!
+
+```
+I have no idea what I'm doing, but I'm really interested to understand if something as simple as something as this... could be the secret behind it and how the same thing can be used in so many different ways.
+In terms of being
+
+I have no idea what I'm doing, but thanks."
+"The answer to my question, or so many questions..."
+"It's not clear, but I really love this question of my very own, and I have never been particularly excited
+
+I have no idea what I'm doing, but it's fun!
+It's been a busy week, too...
+I had to cut out the paper for my own project, too. I did not have time for this project, so that
+```
+
+
 # Technical overview
 
-In the following I write a short summary of the technical details of the model and training. It's only a cristallized version of my own notes, a reminder! The thorough description can be found in the [Let's reproduce GPT-2 (124M)](https://youtu.be/l8pRSuU81PU) video, and the corresponding [build-nanogpt](https://github.com/karpathy/build-nanogpt) repo.
+In the following I write a short summary of the technical details of the model, training and the hardware. It's only a cristallized version of my own notes, a reminder! The thorough description of these topics can be found in the [Let's reproduce GPT-2 (124M)](https://youtu.be/l8pRSuU81PU) video, and the corresponding [build-nanogpt](https://github.com/karpathy/build-nanogpt) repo.
 
 ## Model
 
@@ -40,7 +62,7 @@ In the following I write a short summary of the technical details of the model a
 | Number of transformer layers      | 12    |                                                                                      |
 
 ## Training
-- For training I used HuggingFace's [FineWeb Dataset](https://huggingface.co/spaces/HuggingFaceFW/blogpost-fineweb-v1), more specifically the 10 billion token version `sample-10BT` of the [FineWeb-Edu Dataset](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu) which is a collection of high quality educational content scraped from the web. Since the 10 billion token dataset cannot be loaded all at once, it is separated to chunks (aka shards) of 100 million tokens. A batch for a single training step is loaded from these shards.
+- For training I used HuggingFace's [FineWeb Dataset](https://huggingface.co/spaces/HuggingFaceFW/blogpost-fineweb-v1), more specifically the 10 billion token version `sample-10BT` of the [FineWeb-Edu Dataset](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu) which is a collection of high quality educational content scraped from the web. Since the 10 billion token dataset cannot be loaded all at once, it is separated to chunks (aka shards) of 100 million tokens. A batch for a single training step is loaded from these shards. The data preprocessing related content that I took over from Andrej can be found in `fineweb.py`
 - `TensorFloar32` precision is used [[5]] instead of the highest `float32` precision, resulting in significant speedups during the training.
 - AdamW optimizer is used instead of Adam for faster convergence (i.e. lower training loss) and better generalization performance (i.e. lower validation/test error) [[7]], [[8]].
 - The batch size is taken from the GPT-3 paper [[2]], from the GPT-3 Small architecture, where they used a 0.5 million batch size. Since this does not fit into a single forward-backward-update cycle (not enough GPU memory), the gradient is accumulated by iterating with smaller batches, calling forward-backward, but **without** calling update or zeroing out the gradients. Once we cumulatively passed roughly 0.5 million tokens, the accumulated gradients are avaraged out and used to update the model parameters. Then, the gradients are zeroed out, and the next gradient accumulation starts.
@@ -59,10 +81,10 @@ In the following I write a short summary of the technical details of the model a
 | Leanring rate warmup steps     | 715        | Warmup spans across the first 715 steps of training.                                                                           |
 
 
-# Hardware
-Originally I planned to run the training on LambdaLabs GPU cloud, on a 8x NVIDIA A100 SXM GPUs (hence I also coded the [Distributed Data Parallel](https://pytorch.org/tutorials/intermediate/ddp_tutorial.html) configuration part, preparing for training on multiple GPUs), but it turned out that my own RTX 4070 Super was sufficient to execute the training with fraction of the price (albeit running for 25x longer).
+## Hardware
+Originally I planned to run the training on [Lambda](https://lambdalabs.com/) cloud on 8x NVIDIA A100 SXM GPUs (hence I also coded the [Distributed Data Parallel](https://pytorch.org/tutorials/intermediate/ddp_tutorial.html) configuration part, preparing for training on multiple GPUs), but it turned out that my own RTX 4070 Super was sufficient to execute the training with fraction of the price (albeit running for 25x longer).
 
-|         | LambdaLabs On-demand 8x NVIDIA A100 SXM | My own PC NVIDIA RTX 4070 Super                                         |
+|         | Lambda On-demand 8x NVIDIA A100 SXM | My own PC NVIDIA RTX 4070 Super                                         |
 |---------|-----------------------------------------|-------------------------------------------------------------------------|
 | Training time | ~2 hours                                | ~50 hours                                                               |
 | Price   | USD 35-40 (including VAT)               | USD 2-3 (based on the current electricity prices and power consumption) |
@@ -70,7 +92,23 @@ Originally I planned to run the training on LambdaLabs GPU cloud, on a 8x NVIDIA
 Thus I picked my own RTX 4070 Super, and went brrr for 2.5 days with it.
 
 # Results
-I took over Andrej's logging and plotting code
+I took over Andrej's logging and plotting code to visualize the results, that is quite similar to what he published.
+
+My results:
+
+![](./img/results.png)
+
+Andrej's results:
+
+![](./img/results_andrej.PNG)
+
+#### Why is the validation loss so noisy in my case?
+
+I noticed that my validation loss has much more noise. In Andrej's code, I discovered that he uses a fixed minibatch of the validation set to calculate the validation loss. In my code I keep iterating over the complete validation set, taking a different batch for each validation loss calculation, which in turn results in a much noisier graph. I'm still not sure why Andrej kept using such a small subset of the validation data, I think that might be a bug.
+
+Why GPT-2 is important?
+hellaswag eval
+how eval is done
 
 # References
 
