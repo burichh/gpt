@@ -11,12 +11,10 @@ What I cannot create, I do not understand!
 
 Thus this repo exists.
 
-
-
 # Goal
-Andrej Karpathy is great. He is just great. When I saw he released his video [Let's reproduce GPT-2 (124M)](https://youtu.be/l8pRSuU81PU) my goal was clear: understand every step he makes, the reasoning why he does so, the context within which that reasoning exists, and then reproduce his results. More precisely, reproduce OpenAI's results of GPT2-Small version (124 million parameters), based on the papers [[1]] and [[2]] guided by Andrej's video.
+Andrej Karpathy is great. He is just great. When I saw he released his video [Let's reproduce GPT-2 (124M)](https://youtu.be/l8pRSuU81PU) my goal was clear: understand every step he makes, the reasoning why he does so and reproduce the results. More precisely, reproduce OpenAI's results of GPT2-Small version (124 million parameters), based on the papers [[1]] and [[2]] guided by Andrej's video.
 
-**Learning loop**: watch the video, read the papers (and some others that I've found really helpful too, linked at the bottom), make notes, close the solution, code it from scratch, play with the results, compare with Andrej's code, take over his solutions where I found they were superior, and refactor where needed. Repeat.
+**Learning loop**: watch the video, read the papers (and some others that I've found really helpful too, linked at the bottom), make notes, close the solution, code it from scratch, play with the results, compare with Andrej's code, take over his solutions where I found they were superior and refactor where needed. Repeat.
 
 So, from meaningless jibber-jabber, starting with my hardcoded context `I have no idea what I'm doing, but`
 
@@ -42,7 +40,7 @@ I had to cut out the paper for my own project, too. I did not have time for this
 
 # Technical overview
 
-In the following I write a short summary of the technical details of the model, training and the hardware. It's only a cristallized version of my own notes, a reminder! The thorough description of these topics can be found in the [Let's reproduce GPT-2 (124M)](https://youtu.be/l8pRSuU81PU) video, and the corresponding [build-nanogpt](https://github.com/karpathy/build-nanogpt) repo.
+In the following I write a short summary of the technical details of the model, training and the hardware. It's only a shorter version of my own notes, a reminder! The thorough description of these topics can be found in the [Let's reproduce GPT-2 (124M)](https://youtu.be/l8pRSuU81PU) video, the corresponding [build-nanogpt](https://github.com/karpathy/build-nanogpt) repo, and in the references I linked.
 
 ## Model
 
@@ -92,7 +90,16 @@ Originally I planned to run the training on [Lambda](https://lambdalabs.com/) cl
 Thus I picked my own RTX 4070 Super, and went brrr for 2.5 days with it.
 
 # Results
-I took over Andrej's logging and plotting code to visualize the results, that is quite similar to what he published.
+
+The [HellaSwag](https://rowanzellers.com/hellaswag/) dataset was used for evaluating the model's performance. It contains questions and answers that are constructed in an adversarial way, such that they are trivial for humans, but were quite challenging back in 2019 for state of the art language models. The idea behind this dataset is to test common-sense: although all answers are grammatically and linguistically correct, they are total nonsense, given the question. Each question has four different answers, with only a single correct answer.
+
+Note, that nowadays large language models have no trouble reaching human level performance on HellaSwag, but back in 2019 it was still a challenging measure of artificial lingusitic intelligence.
+
+#### But how does this pretrained-only GPT model answers questions?
+
+In this project, I do not train my GPT model to become a helpful chat assistant, it's just a document filler. It is unable to answer questions in a regular "test" style, asking it to pick an answer A, B, C or D for a specific question. Instead, given a question Q with its answers A, B, C and D, they are combined together: the question Q is prepended for each answer, and they are feeded to the model in a single `4 x (q + a)` batch of data, where `q` is the length of question Q and `a` is the length of the longest answer (so all answer can fit). After the forward pass, we can calculate the loss for each token in each answer, not counting the padded areas at the very end, if there are any. We choose the answer that has the lowest average loss.
+
+I took over Andrej's logging and plotting code to visualize the results.
 
 My results:
 
@@ -102,13 +109,21 @@ Andrej's results:
 
 ![](./img/results_andrej.PNG)
 
+The training loss and HellaSwag results are quite close to each other, but there is a noticably higher noise in the validation loss for my run.
+
 #### Why is the validation loss so noisy in my case?
 
-I noticed that my validation loss has much more noise. In Andrej's code, I discovered that he uses a fixed minibatch of the validation set to calculate the validation loss. In my code I keep iterating over the complete validation set, taking a different batch for each validation loss calculation, which in turn results in a much noisier graph. I'm still not sure why Andrej kept using such a small subset of the validation data, I think that might be a bug.
+In Andrej's code, I discovered that he uses a fixed minibatch of the validation set to calculate the validation loss. In my code I keep iterating over the complete validation set, taking a different batch for each validation loss calculation, which in turn results in a much noisier graph. I'm still not sure why Andrej kept using such a small subset of the validation data, I think that might be a bug.
 
-Why GPT-2 is important?
-hellaswag eval
-how eval is done
+# Conclusion
+
+Microsoft has suggested that GPT-4, beyond its mastery of language, represents an early yet incomplete version of artificial general intelligence [[10]]. I think we can all agree that this is not an entirely unreasonable observeration. However, with the funny, strange, and trivial errors it can make, along with the obvious and blatant hallucinations it can confidently present, it is clear that it's still far from complete. Understanding how this "mimicry" of intelligence has evolved so rapidly is crucial to be able to actively participate in the process.
+
+So, why is old, not-so-awesome GPT-2 important?
+
+The architecture of GPT-4 is unfortunately not published, but based on the public GPT-2 and GPT-3 versions, we can at least give an educated guess what might lie behind these remarkable capabilities. Surely, GPT-4 is much larger, and was trained using an unprecedented scale of compute and data, but the foundations are probably quite similar. Foundations that can be understood by building the old, not-so-awesome GPT-2 from scratch.
+
+Thus this repo exists.
 
 # References
 
@@ -138,3 +153,6 @@ how eval is done
 
 [9]: https://arxiv.org/pdf/1608.05859 "Using the Output Embedding to Improve Language Models"
 [[9]] Using the Output Embedding to Improve Language Models - [Link](https://arxiv.org/pdf/1608.05859)
+
+[10]: https://arxiv.org/pdf/2303.12712 "Sparks of Artificial General Intelligence: Early experiments with GPT-4"
+[[10]] Sparks of Artificial General Intelligence: Early experiments with GPT-4 - [Link](https://arxiv.org/pdf/2303.12712)
