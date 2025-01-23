@@ -25,7 +25,7 @@ warmump_steps = 715
 max_learning_rate = 6e-4
 min_learning_rate = max_learning_rate * 0.1
 total_batch_size = 524288 # from GPT-3 paper (GPT-3 Small)
-B = 4
+B = 8
 T = 1024
 log_dir = "log"
 
