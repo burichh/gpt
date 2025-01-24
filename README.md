@@ -16,13 +16,13 @@ Andrej Karpathy is great. He is just great. When I saw he released his video [Le
 
 **Learning loop**: watch the video, read the papers (and some others that I've found really helpful too, linked at the bottom), make notes, close the solution, code it from scratch, play with the results, compare with Andrej's code, take over his solutions where I found they were superior and refactor where needed. Repeat.
 
-So, from meaningless jibber-jabber, starting with my hardcoded context `I have no idea what I'm doing, but`
+So, I built the GPT-2 code, and randomly initialized a GPT-2 model. From meaningless jibber-jabber, starting with my hardcoded context `I have no idea what I'm doing, but`
 
 ```
 I have no idea what I'm doing, but punk obfuscBostonsided periodicHu observable Lionellication989phicallGridEspecially hordes tc NAS periodicdriving accur
 ```
 
-I wanted to get to a point where my GPT can generate some tiny tiny spark of linguistic intelligence. Well, it got to the point where it *sometimes* starts making sense!
+I wanted to get to a point where my GPT can generate some tiny tiny spark of linguistic intelligence. Well, after training on 10 billion tokens it got to the point where it *sometimes* starts making sense!
 
 ```
 I have no idea what I'm doing, but I'm really interested to understand if something as simple as something as this... could be the secret behind it and how the same thing can be used in so many different ways.
@@ -37,6 +37,7 @@ It's been a busy week, too...
 I had to cut out the paper for my own project, too. I did not have time for this project, so that
 ```
 
+Note that I did not upload my trained model because it's quite big (1.4GB), and it's not really useful for anyone besides me playing with it for the sake of this project. As an alternative, you can access the HuggingFace version of GPT-2 Small (124M) as I did in my `sample.ipynb`.
 
 # Technical overview
 
@@ -156,3 +157,5 @@ Thus this repo exists.
 
 [10]: https://arxiv.org/pdf/2303.12712 "Sparks of Artificial General Intelligence: Early experiments with GPT-4"
 [[10]] Sparks of Artificial General Intelligence: Early experiments with GPT-4 - [Link](https://arxiv.org/pdf/2303.12712)
+
+Andrej Karpathy's video [Let's reproduce GPT-2 (124M)](https://youtu.be/l8pRSuU81PU) and the corresponding [build-nanogpt](https://github.com/karpathy/build-nanogpt) repo.
