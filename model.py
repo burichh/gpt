@@ -2,7 +2,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import math
+import tiktoken
 
 @dataclass
 class GPTConfig:
@@ -163,3 +163,27 @@ class GPT(nn.Module):
         print(f"num non-decayed param tensors: {len(no_decay_params)} with {num_no_decay_params:,} parameters")
         optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=(0.9, 0.95), eps=1e-8, fused=True)
         return optimizer
+    
+    def generate(self, context: str, length: int, num_of_generated_sequences: int, device: str) -> str:
+        sample_rng = torch.Generator(device)
+        sample_rng.manual_seed(42)
+        enc = tiktoken.get_encoding('gpt2')
+        tokens = enc.encode(context)
+        tokens = torch.tensor(tokens, dtype=torch.long)
+        tokens = tokens.unsqueeze(0).repeat(num_of_generated_sequences, 1) # (B, T) input
+        x = tokens.to(device)
+
+        while x.size(1) < length:
+            with torch.autocast(device_type=device, dtype=torch.bfloat16):
+                logits, loss = self(x)
+            probs = F.softmax(logits[:, -1, :], dim=-1)
+            top_k_probs, top_k_indices = torch.topk(probs, 50, dim=-1) # (B, 50)
+            next_token_index = torch.multinomial(top_k_probs, num_samples=1, generator=sample_rng)
+            next_token = torch.gather(top_k_indices, dim=-1, index=next_token_index)
+            x = torch.cat([x, next_token], dim=-1)
+
+        out = []
+        for i in range(x.size(0)):
+            out.append(enc.decode(x[i].tolist()))
+
+        return out
