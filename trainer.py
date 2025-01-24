@@ -4,7 +4,6 @@ import math
 import os
 import torch.nn.functional as F
 import tiktoken
-from typing import Literal
 from dataloader import DataLoader
 from model import GPT
 from hellaswag import iterate_examples, render_example
